@@ -169,6 +169,16 @@ int main()
       continue;
     }
 
+    if (toks[0] == "pwd") {
+      char cwd[1024];
+      if (getcwd(cwd, sizeof(cwd)) != NULL) {
+          cout << cwd << endl;
+      } else {
+          perror("pwd");
+      }
+      continue;
+    }
+
     // =============== PARSE REDIRECTION ===============
     string input_file = "";
     string output_file = "";
