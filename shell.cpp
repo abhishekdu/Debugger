@@ -1,4 +1,21 @@
+/* 
+Commands added:
+  exit, cd
+Redirection:
+  <,>
+Signal: 
+  Ignoring SIGINT (Ctrl-C) in the shell, which is useful to prevent the shell from terminating when Ctrl-C is pressed.
+Tokenization of Input
 
+*/
+/*
+
+PENDING: 
+Pipe
+Error handling
+More build in command
+
+*/
 #include <bits/stdc++.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -267,4 +284,5 @@ int main()
 
   return 0;
 }
+
 
