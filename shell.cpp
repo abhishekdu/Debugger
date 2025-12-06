@@ -16,14 +16,12 @@ Error handling
 More build in command
 
 */
-#include <bits/stdc++.h>
+
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/ptrace.h>
-#include <sys/user.h>
 #include <sys/wait.h>
 
 using namespace std;
@@ -261,6 +259,7 @@ int main()
 
   return 0;
 }
+
 
 
 
