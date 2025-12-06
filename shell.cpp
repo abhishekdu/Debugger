@@ -179,6 +179,13 @@ int main()
       continue;
     }
 
+    if (toks[0] == "export") {
+      if (toks.size() > 1) {
+          putenv(const_cast<char*>(toks[1].c_str()));
+      }
+      continue;
+    }
+
     // =============== PARSE REDIRECTION ===============
     string input_file = "";
     string output_file = "";
@@ -280,6 +287,7 @@ int main()
 
   return 0;
 }
+
 
 
 
