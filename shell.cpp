@@ -22,7 +22,20 @@ More build in command
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <cerrno> // for errno
+#include <cstdlib> // for getenv, get_exit, stoi
+#include <cstdio> // for perror
+#include <cctype> // for isspace
+
+#include <unistd.h>
 #include <sys/wait.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <signal.h>
 
 using namespace std;
 
@@ -183,16 +196,14 @@ int main()
     if (toks.empty())
       continue;
 
-    // Prepare argv for execvp
-    vector<char *> argv;
-    vector<string> storage;
-    storage.reserve(toks.size());
+      // Prepare argv for execvp
+  vector<char *> argv;
+  // Use toks as the storage for the strings.
+  for (auto &s : toks)
+    argv.push_back(&s[0]); // Get non-const char*
+  argv.push_back(nullptr);
+    
 
-    for (auto &s : toks)
-      storage.push_back(s);
-    for (auto &s : storage)
-      argv.push_back(&s[0]);
-    argv.push_back(nullptr);
 
     // =============== FORK AND EXECUTE ===============
     pid_t pid = fork();
@@ -259,6 +270,7 @@ int main()
 
   return 0;
 }
+
 
 
 
