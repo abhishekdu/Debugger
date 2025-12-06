@@ -1,5 +1,3 @@
-// src/shell.cpp
-// Mini Shell: Commands, Quoting, Background, Signals, Redirection (<, >)
 
 #include <bits/stdc++.h>
 #include <unistd.h>
@@ -7,8 +5,14 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/ptrace.h>
+#include <sys/user.h>
+#include <sys/wait.h>
 
 using namespace std;
+
+
+pid_t target_pid = -1; 
 
 void sigchld_handler(int)
 {
@@ -21,6 +25,28 @@ void sigchld_handler(int)
       break;
   }
   errno = saved;
+}
+
+void run_target(const string &executable) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("fork");
+        return;
+    }
+
+    if (pid == 0) {
+        // In the child process
+        target_pid = getpid();
+        ptrace(PTRACE_TRACEME, 0, NULL, NULL);  // Tell the kernel we want to be traced
+        execvp(executable.c_str(), NULL);      // Execute the target program
+        perror("execvp");
+        exit(1);  // Exit if execvp fails
+    } else {
+        // In the parent process (the debugger)
+        target_pid = pid;
+        waitpid(target_pid, NULL, 0);  // Wait for the child process to stop at execve
+    }
 }
 
 void setup_signal_handlers()
@@ -241,3 +267,4 @@ int main()
 
   return 0;
 }
+
