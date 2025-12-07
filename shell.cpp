@@ -6,12 +6,12 @@ Redirection:
 Signal: 
   Ignoring SIGINT (Ctrl-C) in the shell, which is useful to prevent the shell from terminating when Ctrl-C is pressed.
 Tokenization of Input
-
+pipe
 */
 /*
 
 PENDING: 
-Pipe
+
 Error handling
 
 
@@ -216,3 +216,4 @@ int main() {
     }
     return 0;
 }
+
