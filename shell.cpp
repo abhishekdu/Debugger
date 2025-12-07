@@ -28,7 +28,6 @@ Error handling
 #include <cstring>
 #include <cerrno>
 #include <fstream>
-
 #include <iostream>
 #include <string>
 #include <vector>
@@ -49,6 +48,7 @@ void setup_signals() {
     signal(SIGINT, SIG_IGN);
 }
 
+// Tokenizer for parsing commands
 vector<string> tokenize(const string& line) {
     vector<string> tokens;
     string cur;
@@ -114,9 +114,34 @@ string expand_command_subst(string token) {
     return result;
 }
 
+// Get the prompt for the shell
 string get_prompt() {
     char cwd[4096];
     return getcwd(cwd, sizeof(cwd)) ? string(cwd) + "> " : "miniShell> ";
+}
+
+// Function to split the command by pipe ('|') symbol
+vector<string> split_by_pipe(const string& line) {
+    vector<string> commands;
+    size_t start = 0;
+    for (size_t i = 0; i < line.length(); i++) {
+        if (line[i] == '|') {
+            commands.push_back(line.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    commands.push_back(line.substr(start));
+    return commands;
+}
+
+// Parse command into arguments for execvp
+vector<char*> parse_command(const vector<string>& args) {
+    vector<char*> argv;
+    for (const auto& s : args) {
+        argv.push_back(const_cast<char*>(s.c_str()));
+    }
+    argv.push_back(nullptr);
+    return argv;
 }
 
 int main() {
@@ -142,78 +167,107 @@ int main() {
             tok = expand_command_subst(tok);
         }
 
-        string in_file, out_file;
-        vector<string> args;
-
-        for (size_t i = 0; i < tokens.size(); ) {
-            if (tokens[i] == "<" && i + 1 < tokens.size()) { in_file = tokens[i+1]; i += 2; }
-            else if (tokens[i] == ">" && i + 1 < tokens.size()) { out_file = tokens[i+1]; i += 2; }
-            else { args.push_back(tokens[i]); ++i; }
-        }
-
-        bool bg = false;
-        if (!args.empty() && args.back() == "&") { bg = true; args.pop_back(); }
-        if (args.empty()) continue;
-
-        const string& cmd = args[0];
-
-        if (cmd == "exit") return args.size() > 1 ? stoi(args[1]) : 0;
-        if (cmd == "cd") {
-            const char* p = args.size() > 1 ? args[1].c_str() : getenv("HOME");
-            if (chdir(p ? p : "~") != 0) perror("cd");
-            continue;
-        }
-        if (cmd == "pwd") {
-            char cwd[4096]; 
-            if (getcwd(cwd, sizeof(cwd))) cout << cwd << '\n';
-            continue;
-        }
-        if (cmd == "export" && args.size() >= 2) {
-            for (size_t i = 1; i < args.size(); ++i) {
-                string s = args[i];
-                size_t eq = s.find('=');
-                if (eq != string::npos)
-                    setenv(s.substr(0, eq).c_str(), s.substr(eq + 1).c_str(), 1);
-                else
-                    setenv(s.c_str(), "", 1);
+        // Handle pipe (|) command splitting
+        vector<string> commands = split_by_pipe(trimmed);
+        int num_commands = commands.size();
+        
+        if (num_commands > 1) {
+            int pipefd[2 * (num_commands - 1)];
+            
+            for (int i = 0; i < num_commands - 1; ++i) {
+                pipe(pipefd + i * 2);  // Create pipe
             }
-            continue;
-        }
 
-        if (cmd == "echo" && in_file.empty() && out_file.empty()) {
-            for (size_t i = 1; i < args.size(); ++i) {
-                if (i > 1) cout << " ";
-                cout << args[i];
-            }
-            cout << '\n';
-            continue;
-        }
+            for (int i = 0; i < num_commands; ++i) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    if (i > 0) {
+                        // Connect previous pipe's output to stdin
+                        dup2(pipefd[(i - 1) * 2], 0);
+                    }
+                    if (i < num_commands - 1) {
+                        // Connect current pipe's input to stdout
+                        dup2(pipefd[i * 2 + 1], 1);
+                    }
 
-        pid_t pid = fork();
-        if (pid == 0) {
-            signal(SIGINT, SIG_DFL);
-            if (!in_file.empty()) {
-                int fd = open(in_file.c_str(), O_RDONLY);
-                if (fd < 0) { perror("open input"); _exit(127); }
-                dup2(fd, 0); close(fd);
+                    // Close all pipe file descriptors in the child process
+                    for (int j = 0; j < 2 * (num_commands - 1); ++j) {
+                        close(pipefd[j]);
+                    }
+
+                    // Tokenize and execute the current command
+                    vector<string> cmd_tokens = tokenize(commands[i]);
+                    if (!cmd_tokens.empty()) {
+                        const string& cmd = cmd_tokens[0];
+                        if (cmd == "exit") return 0; // Handle exit command
+                        vector<char*> argv = parse_command(cmd_tokens);
+                        execvp(argv[0], argv.data());
+                        perror("execvp");
+                        _exit(127);
+                    }
+                }
             }
-            if (!out_file.empty()) {
-                int fd = open(out_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd < 0) { perror("open output"); _exit(127); }
-                dup2(fd, 1); close(fd);
+
+            // Parent process: Close pipes and wait for all children
+            for (int i = 0; i < 2 * (num_commands - 1); ++i) {
+                close(pipefd[i]);
             }
-            vector<char*> argv;
-            for (const auto& s : args) argv.push_back(const_cast<char*>(s.c_str()));
-            argv.push_back(nullptr);
-            execvp(argv[0], argv.data());
-            perror("execvp");
-            _exit(127);
+            for (int i = 0; i < num_commands; ++i) {
+                wait(NULL);
+            }
+        } else {
+            // Single command execution without pipe
+            string in_file, out_file;
+            vector<string> args;
+
+            for (size_t i = 0; i < tokens.size(); ) {
+                if (tokens[i] == "<" && i + 1 < tokens.size()) { in_file = tokens[i+1]; i += 2; }
+                else if (tokens[i] == ">" && i + 1 < tokens.size()) { out_file = tokens[i+1]; i += 2; }
+                else { args.push_back(tokens[i]); ++i; }
+            }
+
+            bool bg = false;
+            if (!args.empty() && args.back() == "&") { bg = true; args.pop_back(); }
+            if (args.empty()) continue;
+
+            const string& cmd = args[0];
+
+            if (cmd == "exit") return args.size() > 1 ? stoi(args[1]) : 0;
+            if (cmd == "cd") {
+                const char* p = args.size() > 1 ? args[1].c_str() : getenv("HOME");
+                if (chdir(p ? p : "~") != 0) perror("cd");
+                continue;
+            }
+            if (cmd == "pwd") {
+                char cwd[4096]; 
+                if (getcwd(cwd, sizeof(cwd))) cout << cwd << '\n';
+                continue;
+            }
+
+            pid_t pid = fork();
+            if (pid == 0) {
+                signal(SIGINT, SIG_DFL);
+                if (!in_file.empty()) {
+                    int fd = open(in_file.c_str(), O_RDONLY);
+                    if (fd < 0) { perror("open input"); _exit(127); }
+                    dup2(fd, 0); close(fd);
+                }
+                if (!out_file.empty()) {
+                    int fd = open(out_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd < 0) { perror("open output"); _exit(127); }
+                    dup2(fd, 1); close(fd);
+                }
+                vector<char*> argv = parse_command(args);
+                execvp(argv[0], argv.data());
+                perror("execvp");
+                _exit(127);
+            }
+            else if (pid > 0) {
+                if (!bg) waitpid(pid, nullptr, 0);
+                else cout << "[background pid " << pid << "]\n";
+            }
+            else perror("fork");
         }
-        else if (pid > 0) {
-            if (!bg) waitpid(pid, nullptr, 0);
-            else cout << "[background pid " << pid << "]\n";
-        }
-        else perror("fork");
     }
     return 0;
 }
