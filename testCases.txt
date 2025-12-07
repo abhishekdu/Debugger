@@ -15,3 +15,14 @@ kill: (3006): No such process
 shell.cpp
 /mnt/d/IITD/system concepts/assignment/debugger> echo "Hello" | tr 'a-z' 'A-Z'
 HELLO
+
+i/o
+ag@LAPTOP-5IOEOS47:/mnt/d/IITD/system concepts/assignment/debugger$ ./bin/shell
+/mnt/d/IITD/system concepts/assignment/debugger> cat < input.txt
+open input: No such file or directory
+/mnt/d/IITD/system concepts/assignment/debugger> cat < test.txt 
+hello world
+/mnt/d/IITD/system concepts/assignment/debugger> echo "Hello again" >> test.txt      
+/mnt/d/IITD/system concepts/assignment/debugger> cat < test.txt
+hello world
+Hello again
