@@ -179,11 +179,27 @@ int main()
       continue;
     }
 
-    if (toks[0] == "export") {
-      if (toks.size() > 1) {
-          putenv(const_cast<char*>(toks[1].c_str()));
-      }
-      continue;
+if (toks[0] == "export" && toks.size() > 1) {
+        string s = toks[1];
+        size_t eq = s.find('=');
+        if (eq != string::npos) {
+            string name = s.substr(0, eq);
+            string value = s.substr(eq + 1);
+            setenv(name.c_str(), value.c_str(), 1);
+        } else {
+            // just export existing var
+            putenv(const_cast<char*>(s.c_str()));
+        }
+        continue;
+    }
+
+    if (toks[0] == "echo") {
+        for (size_t i = 1; i < toks.size(); ++i) {
+            if (i > 1) cout << " ";
+            cout << toks[i];
+        }
+        cout << '\n';
+        continue;
     }
 
     // =============== PARSE REDIRECTION ===============
@@ -287,6 +303,7 @@ int main()
 
   return 0;
 }
+
 
 
 
