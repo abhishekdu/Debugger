@@ -22,296 +22,156 @@ More build in command
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <cstdlib>
+#include <cstdio>
+#include <cctype>
+#include <cstring>
+#include <cerrno>
 
 #include <iostream>
 #include <string>
-#include <cstring>
 #include <vector>
-#include <cerrno> // for errno
-#include <cstdlib> // for getenv, get_exit, stoi
-#include <cstdio> // for perror
-#include <cctype> // for isspace
-
-#include <unistd.h>
-#include <sys/wait.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <signal.h>
 
 using namespace std;
 
-
-void sigchld_handler(int)
-{
-  int saved = errno;
-  while (true)
-  {
-    int status;
-    pid_t pid = waitpid(-1, &status, WNOHANG);
-    if (pid <= 0)
-      break;
-  }
-  errno = saved;
+void sigchld_handler(int) {
+    int saved = errno;
+    while (waitpid(-1, nullptr, WNOHANG) > 0);
+    errno = saved;
 }
 
-void setup_signal_handlers()
-{
-  struct sigaction sa;
-  sa.sa_handler = sigchld_handler;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_RESTART;
-  sigaction(SIGCHLD, &sa, nullptr);
-
-  // Shell should ignore Ctrl-C
-  signal(SIGINT, SIG_IGN);
+void setup_signals() {
+    struct sigaction sa{};
+    sa.sa_handler = sigchld_handler;
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGCHLD, &sa, nullptr);
+    signal(SIGINT, SIG_IGN);
 }
 
-// ---------------- TOKENIZER ----------------
-// Supports "quoted strings" as single tokens.
-vector<string> tokenize(const string &line)
-{
-  vector<string> tokens;
-  string cur;
-  bool in_quote = false;
-
-  for (size_t i = 0; i < line.size(); i++)
-  {
-    char c = line[i];
-
-    if (c == '"')
-    {
-      in_quote = !in_quote;
-      continue;
+vector<string> tokenize(const string& line) {
+    vector<string> tokens;
+    string cur;
+    bool in_quote = false;
+    char qc = 0;
+    for (char c : line) {
+        if (!in_quote && (c == '"' || c == '\'')) { in_quote = true; qc = c; continue; }
+        if (in_quote && c == qc) { in_quote = false; continue; }
+        if (!in_quote && isspace((unsigned char)c)) {
+            if (!cur.empty()) { tokens.push_back(cur); cur.clear(); }
+            continue;
+        }
+        cur += c;
     }
-
-    if (!in_quote && isspace((unsigned char)c))
-    {
-      if (!cur.empty())
-      {
-        tokens.push_back(cur);
-        cur.clear();
-      }
+    if (!cur.empty()) tokens.push_back(cur);
+    for (auto& s : tokens) {
+        if (s.size() >= 2 && ((s[0] == '"' && s.back() == '"') || (s[0] == '\'' && s.back() == '\'')))
+            s = s.substr(1, s.size() - 2);
     }
-    else
-    {
-      cur.push_back(c);
-    }
-  }
-
-  if (!cur.empty())
-    tokens.push_back(cur);
-  return tokens;
+    return tokens;
 }
 
-// =============================================================
 string get_prompt() {
-    char cwd[1024];
-    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
-        return "?> ";
-    }
-    return string(cwd) + "> ";
+    char cwd[4096];
+    return getcwd(cwd, sizeof(cwd)) ? string(cwd) + "> " : "miniShell> ";
 }
 
-int main()
-{
-  ios::sync_with_stdio(false);
-  cin.tie(nullptr);
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+    setup_signals();
 
-  setup_signal_handlers();
+    string line;
+    while (true) {
+        cout << get_prompt() << flush;
+        if (!getline(cin, line)) { cout << "\n"; break; }
 
-  string line;
-  string prompt = "miniShell> ";
+        size_t l = line.find_first_not_of(" \t\r\n");
+        if (l == string::npos) continue;
+        size_t r = line.find_last_not_of(" \t\r\n");
+        string trimmed = line.substr(l, r - l + 1);
 
-  while (true)
-  {
-    // show prompt and flush immediately
-    cout<<get_prompt()<<flush;
-    cout << prompt << flush;
+        auto tokens = tokenize(trimmed);
+        if (tokens.empty()) continue;
 
-    if (!getline(cin, line))
-    {
-      cout << "\n";
-      break;
-    }
+        string in_file, out_file;
+        vector<string> args;
 
-    // trim spaces
-    auto l = line.find_first_not_of(" \t\r\n");
-    if (l == string::npos)
-      continue;
-    auto r = line.find_last_not_of(" \t\r\n");
-    string trimmed = line.substr(l, r - l + 1);
-
-    // tokenize input
-    vector<string> toks = tokenize(trimmed);
-    if (toks.empty())
-      continue;
-
-    // detect background job
-    bool background = false;
-    if (!toks.empty() && toks.back() == "&")
-    {
-      background = true;
-      toks.pop_back();
-      if (toks.empty())
-        continue;
-    }
-
-    // ---------------- BUILT-INS ----------------
-    if (toks[0] == "exit")
-    {
-      int code = 0;
-      if (toks.size() > 1)
-        code = stoi(toks[1]);
-      return code;
-    }
-
-    if (toks[0] == "cd")
-    {
-      const char *path;
-      if (toks.size() > 1)
-        path = toks[1].c_str();
-      else
-        path = getenv("HOME");
-
-      if (chdir(path) != 0)
-        perror("cd");
-      continue;
-    }
-
-    if (toks[0] == "pwd") {
-      char cwd[1024];
-      if (getcwd(cwd, sizeof(cwd)) != NULL) {
-          cout << cwd << endl;
-      } else {
-          perror("pwd");
-      }
-      continue;
-    }
-
-if (toks[0] == "export" && toks.size() > 1) {
-        string s = toks[1];
-        size_t eq = s.find('=');
-        if (eq != string::npos) {
-            string name = s.substr(0, eq);
-            string value = s.substr(eq + 1);
-            setenv(name.c_str(), value.c_str(), 1);
-        } else {
-            // just export existing var
-            putenv(const_cast<char*>(s.c_str()));
+        for (size_t i = 0; i < tokens.size(); ) {
+            if (tokens[i] == "<" && i + 1 < tokens.size()) { in_file = tokens[i + 1]; i += 2; }
+            else if (tokens[i] == ">" && i + 1 < tokens.size()) { out_file = tokens[i + 1]; i += 2; }
+            else { args.push_back(tokens[i]); ++i; }
         }
-        continue;
-    }
 
-    if (toks[0] == "echo") {
-        for (size_t i = 1; i < toks.size(); ++i) {
-            if (i > 1) cout << " ";
-            cout << toks[i];
+        bool bg = false;
+        if (!args.empty() && args.back() == "&") { bg = true; args.pop_back(); }
+        if (args.empty()) continue;
+
+        const string& cmd = args[0];
+
+        // === BUILT-INS THAT DON'T NEED REDIRECTION ===
+        if (cmd == "exit") return args.size() > 1 ? stoi(args[1]) : 0;
+        if (cmd == "cd") {
+            const char* p = args.size() > 1 ? args[1].c_str() : getenv("HOME");
+            if (chdir(p ? p : "~") != 0) perror("cd");
+            continue;
         }
-        cout << '\n';
-        continue;
-    }
-
-    // =============== PARSE REDIRECTION ===============
-    string input_file = "";
-    string output_file = "";
-    vector<string> cleaned;
-
-    for (int i = 0; i < (int)toks.size(); i++)
-    {
-      if (toks[i] == "<" && i + 1 < (int)toks.size())
-      {
-        input_file = toks[i + 1];
-        i++;
-      }
-      else if (toks[i] == ">" && i + 1 < (int)toks.size())
-      {
-        output_file = toks[i + 1];
-        i++;
-      }
-      else
-      {
-        cleaned.push_back(toks[i]);
-      }
-    }
-
-    toks = cleaned;
-    if (toks.empty())
-      continue;
-
-      // Prepare argv for execvp
-  vector<char *> argv;
-  // Use toks as the storage for the strings.
-  for (auto &s : toks)
-    argv.push_back(&s[0]); // Get non-const char*
-  argv.push_back(nullptr);
-    
-
-
-    // =============== FORK AND EXECUTE ===============
-    pid_t pid = fork();
-
-    if (pid < 0)
-    {
-      perror("fork");
-      continue;
-    }
-
-    if (pid == 0)
-    {
-      // CHILD PROCESS
-      signal(SIGINT, SIG_DFL); // child should die on Ctrl-C
-
-      // ----- INPUT REDIRECTION -----
-      if (!input_file.empty())
-      {
-        int fd = open(input_file.c_str(), O_RDONLY);
-        if (fd < 0)
-        {
-          perror("input redirection");
-          _exit(1);
+        if (cmd == "pwd") {
+            char cwd[4096];
+            if (getcwd(cwd, sizeof(cwd))) cout << cwd << '\n';
+            else perror("pwd");
+            continue;
         }
-        dup2(fd, STDIN_FILENO);
-        close(fd);
-      }
-
-      // ----- OUTPUT REDIRECTION -----
-      if (!output_file.empty())
-      {
-        int fd = open(output_file.c_str(),
-                      O_WRONLY | O_CREAT | O_TRUNC,
-                      0644);
-        if (fd < 0)
-        {
-          perror("output redirection");
-          _exit(1);
+        if (cmd == "export" && args.size() >= 2) {
+            for (size_t i = 1; i < args.size(); ++i) {
+                string s = args[i];
+                size_t eq = s.find('=');
+                if (eq != string::npos)
+                    setenv(s.substr(0, eq).c_str(), s.substr(eq + 1).c_str(), 1);
+                else
+                    setenv(s.c_str(), "", 1);
+            }
+            continue;
         }
-        dup2(fd, STDOUT_FILENO);
-        close(fd);
-      }
 
-      // execute command
-      execvp(argv[0], argv.data());
-      perror("execvp");
-      _exit(1);
+        // === echo: if there is redirection → run external /bin/echo ===
+        if (cmd == "echo" && (in_file.empty() && out_file.empty())) {
+            for (size_t i = 1; i < args.size(); ++i) {
+                if (i > 1) cout << " ";
+                cout << args[i];
+            }
+            cout << '\n';
+            continue;
+        }
+
+        // === ALL OTHER CASES (including echo with > or <) → external command ===
+        pid_t pid = fork();
+        if (pid == 0) {
+            signal(SIGINT, SIG_DFL);
+
+            if (!in_file.empty()) {
+                int fd = open(in_file.c_str(), O_RDONLY);
+                if (fd < 0) { perror("open input"); _exit(127); }
+                dup2(fd, 0); close(fd);
+            }
+            if (!out_file.empty()) {
+                int fd = open(out_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd < 0) { perror("open output"); _exit(127); }
+                dup2(fd, 1); close(fd);
+            }
+
+            vector<char*> argv;
+            for (const auto& s : args) argv.push_back(const_cast<char*>(s.c_str()));
+            argv.push_back(nullptr);
+
+            execvp(argv[0], argv.data());
+            perror("execvp");
+            _exit(127);
+        }
+        else if (pid > 0) {
+            if (!bg) waitpid(pid, nullptr, 0);
+            else cout << "[background pid " << pid << "]\n";
+        }
+        else perror("fork");
     }
-    else
-    {
-      // PARENT PROCESS
-      if (!background)
-      {
-        int status = 0;
-        waitpid(pid, &status, 0);
-      }
-      else
-      {
-        cout << "[background pid " << pid << "]\n";
-      }
-    }
-  }
-
-
-  return 0;
+    return 0;
 }
-
-
-
