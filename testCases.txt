@@ -1,0 +1,10 @@
+//background check
+/mnt/d/IITD/system concepts/assignment/debugger> sleep 30 &        
+[background pid 3006]
+/mnt/d/IITD/system concepts/assignment/debugger> ps -p 3006
+    PID TTY          TIME CMD
+   3006 pts/0    00:00:00 sleep
+/mnt/d/IITD/system concepts/assignment/debugger> kill -0 3006
+If nothing comes means it is running, othwerise it will show no such process
+/mnt/d/IITD/system concepts/assignment/debugger> kill -0 3006
+kill: (3006): No such process
