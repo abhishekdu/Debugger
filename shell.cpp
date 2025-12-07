@@ -25,6 +25,7 @@ More build in command
 
 #include <iostream>
 #include <string>
+#include <cstring>
 #include <vector>
 #include <cerrno> // for errno
 #include <cstdlib> // for getenv, get_exit, stoi
@@ -103,6 +104,13 @@ vector<string> tokenize(const string &line)
 }
 
 // =============================================================
+string get_prompt() {
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        return "?> ";
+    }
+    return string(cwd) + "> ";
+}
 
 int main()
 {
@@ -117,6 +125,7 @@ int main()
   while (true)
   {
     // show prompt and flush immediately
+    cout<<get_prompt()<<flush;
     cout << prompt << flush;
 
     if (!getline(cin, line))
@@ -303,10 +312,6 @@ if (toks[0] == "export" && toks.size() > 1) {
 
   return 0;
 }
-
-
-
-
 
 
 
