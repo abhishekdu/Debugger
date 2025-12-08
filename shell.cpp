@@ -15,7 +15,7 @@ using namespace std;
 
 void sigchld_handler(int sig) {
     int saved_errno = errno;
-     (void)sig; 
+    (void)sig; 
     pid_t pid;
     
     do {
@@ -162,7 +162,7 @@ void execute_pipeline(vector<Command>& commands, bool background) {
     if (commands.empty()) return;
 
     int n = commands.size();
-    vector<int> pipefds(2 * max(0, n - 1));
+    vector<int> pipefds(2 * (n > 1 ? n - 1 : 0)); 
 
     for (int i = 0; i < n - 1; i++) {
         if (pipe(&pipefds[i * 2]) < 0) {
@@ -223,6 +223,7 @@ void execute_pipeline(vector<Command>& commands, bool background) {
             argv.push_back(nullptr);
 
             execvp(argv[0], argv.data());
+            perror(argv[0]);      
             _exit(127);
         }
 
@@ -241,13 +242,13 @@ void execute_pipeline(vector<Command>& commands, bool background) {
     }
 
     for (pid_t p : pids) {
-        int status;
-        while (waitpid(p, &status, 0) < 0 && errno == EINTR);
+        waitpid(p, nullptr, 0);  
     }
 }
 
 bool build_pipeline(const vector<string>& tokens, vector<Command>& pipeline, bool& bg) {
     Command cur;
+    bg = false;
 
     for (size_t i = 0; i < tokens.size(); i++) {
         const string& t = tokens[i];
@@ -289,15 +290,13 @@ string trim(const string& s) {
 }
 
 int main() {
-
     setup_signals();
 
     string line;
     vector<Command> pipeline;
     bool bg = false;
 
-    while (true) 
-    {
+    while (true) {
         cout << get_prompt() << flush;
 
         if (!getline(cin, line)) {
@@ -315,10 +314,13 @@ int main() {
             if (t.find("$(") != string::npos)
                 t = expand_command_subst(t);
 
+        pipeline.clear();
+        bg = false;
 
         if (!build_pipeline(tokens, pipeline, bg))
             continue;
 
+        
         if (pipeline.size() == 1) {
             const auto& args = pipeline[0].args;
             if (!args.empty()) {
@@ -331,23 +333,23 @@ int main() {
                     continue;
                 }
 
-            if (args[0] == "pwd") {
-                char buf[4096];
-                if (getcwd(buf, sizeof(buf)))
-                    cout << buf << "\n";
-                else
-                    perror("pwd");
-                continue;
-            }
-
-            if (args[0] == "echo") {
-                for (size_t i = 1; i < args.size(); i++) {
-                    cout << args[i];
-                    if (i + 1 < args.size()) cout << " ";
+                if (args[0] == "pwd") {
+                    char buf[4096];
+                    if (getcwd(buf, sizeof(buf)))
+                        cout << buf << "\n";
+                    else
+                        perror("pwd");
+                    continue;
                 }
-                cout << "\n";
-                continue;
-            }
+
+                if (args[0] == "echo") {
+                    for (size_t i = 1; i < args.size(); i++) {
+                        cout << args[i];
+                        if (i + 1 < args.size()) cout << " ";
+                    }
+                    cout << "\n";
+                    continue;
+                }
             }
         }
 
