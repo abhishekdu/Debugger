@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cctype>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -12,7 +13,7 @@
 #include <cerrno>
 
 using namespace std;
-
+int job_id = 1;
 void sigchld_handler(int sig) {
     int saved_errno = errno;
     (void)sig; 
@@ -236,11 +237,10 @@ void execute_pipeline(vector<Command>& commands, bool background) {
 
     for (int fd : pipefds) close(fd);
 
-    if (background) {
-        cout << "[" << pgid << "]\n";
-        return;
-    }
-
+   if (background) {
+    cout << "[" << job_id++ << "] " << pgid << "\n";
+    return;
+}
     for (pid_t p : pids) {
         waitpid(p, nullptr, 0);  
     }
