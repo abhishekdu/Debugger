@@ -254,20 +254,33 @@ bool build_pipeline(const vector<string>& tokens, vector<Command>& pipeline, boo
         const string& t = tokens[i];
 
         if (t == "|") {
-            if (cur.args.empty()) return false;
+            if (cur.args.empty()){
+              cerr << "syntax error: empty command before '|'\n";
+              return false;  
+            } 
             pipeline.push_back(cur);
             cur = Command();
         }
         else if (t == "&") {
-            if (i != tokens.size() - 1) return false;
+            if (i != tokens.size() - 1)
+            {
+                cerr << "syntax error: '&' only allowed at end of line\n";
+                return false;
+            } 
             bg = true;
         }
         else if (t == "<") {
-            if (i + 1 >= tokens.size()) return false;
+            if (i + 1 >= tokens.size()) {
+                cerr << "syntax error: expected filename after '<'\n";
+                return false;
+            }
             cur.in_file = tokens[++i];
         }
         else if (t == ">" || t == ">>") {
-            if (i + 1 >= tokens.size()) return false;
+            if (i + 1 >= tokens.size()) {
+                cerr << "syntax error: expected filename after '" << t << "'\n";
+                return false;
+            }
             cur.out_file = tokens[++i];
             cur.append = (t == ">>");
         }
@@ -342,14 +355,7 @@ int main() {
                     continue;
                 }
 
-                if (args[0] == "echo") {
-                    for (size_t i = 1; i < args.size(); i++) {
-                        cout << args[i];
-                        if (i + 1 < args.size()) cout << " ";
-                    }
-                    cout << "\n";
-                    continue;
-                }
+               
             }
         }
 
