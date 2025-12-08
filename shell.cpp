@@ -1,219 +1,338 @@
-/* 
-Commands added:
-  exit, cd
-Redirection:
-  <,>
-Signal: 
-  Ignoring SIGINT (Ctrl-C) in the shell, which is useful to prevent the shell from terminating when Ctrl-C is pressed.
-Tokenization of Input
-pipe
-*/
-/*
-
-PENDING: 
-
-Error handling
-
-
-*/
+#include <iostream>
+#include <string>
+#include <vector>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <cstdlib>
-#include <cstdio>
-#include <cctype>
-#include <cstring>
 #include <cerrno>
-#include <fstream>
-#include <iostream>
-#include <string>
-#include <vector>
 
 using namespace std;
 
-void sigchld_handler(int) {
-    int saved = errno;
-    while (waitpid(-1, nullptr, WNOHANG) > 0);
-    errno = saved;
+void sigchld_handler(int sig) {
+    int saved_errno = errno;
+     (void)sig; 
+    pid_t pid;
+    
+    do {
+        pid = waitpid(-1, nullptr, WNOHANG);
+    } while (pid > 0);
+
+    errno = saved_errno;
 }
 
 void setup_signals() {
-    struct sigaction sa{};
+    struct sigaction sa = {};
     sa.sa_handler = sigchld_handler;
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
     sigaction(SIGCHLD, &sa, nullptr);
+
     signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
 }
+
+struct Command {
+    vector<string> args;
+    string in_file;
+    string out_file;
+    bool append = false;
+};
 
 vector<string> tokenize(const string& line) {
     vector<string> tokens;
-    string cur;
+    string current_token;
     bool in_quote = false;
-    char qc = 0;
+    char quote_char = 0;
+    bool escape = false;
 
-    for (char c : line) {
-        if (!in_quote && (c == '"' || c == '\'')) {
-            in_quote = true; qc = c; continue;
+    for (size_t i = 0; i < line.size(); ++i) {
+        char c = line[i];
+
+        if (escape) {
+            current_token += c;
+            escape = false;
+            continue;
         }
-        if (in_quote && c == qc) {
-            if (cur.size() > 0 && cur.back() == qc) {
-                cur.back() = qc;  // doubled quote → literal
-            } else {
-                in_quote = false;
+
+        if (c == '\\') {
+            escape = true;
+            continue;
+        }
+
+        if (!in_quote && (c == '"' || c == '\'')) {
+            in_quote = true;
+            quote_char = c;
+            continue;
+        }
+
+        if (in_quote && c == quote_char) {
+            in_quote = false;
+            continue;
+        }
+
+        if (!in_quote && isspace((unsigned char)c)) {
+            if (!current_token.empty()) {
+                tokens.push_back(current_token);
+                current_token.clear();
             }
             continue;
         }
-        if (!in_quote && isspace((unsigned char)c)) {
-            if (!cur.empty()) { tokens.push_back(cur); cur.clear(); }
+
+        if (!in_quote && (c == '|' || c == '&' || c == '<' || c == '>')) {
+            if (!current_token.empty()) {
+                tokens.push_back(current_token);
+                current_token.clear();
+            }
+            if (c == '>' && i + 1 < line.size() && line[i + 1] == '>') {
+                tokens.push_back(">>");
+                ++i;
+            } else {
+                tokens.push_back(string(1, c));
+            }
             continue;
         }
-        cur += c;
+
+        current_token += c;
     }
-    if (!cur.empty()) tokens.push_back(cur);
+
+    if (!current_token.empty()) {
+        tokens.push_back(current_token);
+    }
+
     return tokens;
 }
 
-// Expand $(command) in a token
 string expand_command_subst(string token) {
     string result;
     size_t i = 0;
+    
     while (i < token.size()) {
-        if (token[i] == '$' && i + 1 < token.size() && token[i+1] == '(') {
-            size_t start = i;
-            i += 2;
+        if (token[i] == '$' && i + 1 < token.size() && token[i + 1] == '(') {
+            size_t j = i + 2;
             int depth = 1;
-            size_t cmd_start = i;
-            while (i < token.size() && depth > 0) {
-                if (token[i] == '(') depth++;
-                else if (token[i] == ')') depth--;
-                i++;
+
+            while (j < token.size() && depth > 0) {
+                if (token[j] == '(') depth++;
+                else if (token[j] == ')') depth--;
+                j++;
             }
+
             if (depth == 0) {
-                string cmd = token.substr(cmd_start, i - cmd_start - 1);
-                FILE* pipe = popen(cmd.c_str(), "r");
-                string output;
-                if (pipe) {
-                    char buf[128];
-                    while (fgets(buf, sizeof(buf), pipe)) output += buf;
-                    pclose(pipe);
-                    if (!output.empty() && output.back() == '\n') output.pop_back();
+                string cmd = token.substr(i + 2, j - i - 3);
+                FILE* p = popen(cmd.c_str(), "r");
+                string out;
+
+                if (p) {
+                    char buf[1024];
+                    while (fgets(buf, sizeof(buf), p)) {
+                        out += buf;
+                    }
+                    pclose(p);
+                    if (!out.empty() && out.back() == '\n') out.pop_back();
                 }
-                result += output;
+
+                result += out;
+                i = j;
             } else {
-                result += token.substr(start);
+                result += token.substr(i);
                 break;
             }
         } else {
             result += token[i++];
         }
     }
+
     return result;
 }
 
 string get_prompt() {
     char cwd[4096];
-    return getcwd(cwd, sizeof(cwd)) ? string(cwd) + "> " : "miniShell> ";
-}
-
-// Function to parse arguments and handle I/O redirection
-void handle_redirection(vector<string>& tokens, string& in_file, string& out_file, bool& append, vector<string>& args) {
-    for (size_t i = 0; i < tokens.size(); ) {
-        if (tokens[i] == "<" && i + 1 < tokens.size()) { 
-            in_file = tokens[i+1]; 
-            i += 2; 
-        }
-        else if (tokens[i] == ">" && i + 1 < tokens.size()) { 
-            out_file = tokens[i+1]; 
-            append = false; // No append, overwrite mode
-            i += 2; 
-        }
-        else if (tokens[i] == ">>" && i + 1 < tokens.size()) { 
-            out_file = tokens[i+1]; 
-            append = true; // Append mode
-            i += 2; 
-        }
-        else { 
-            args.push_back(tokens[i]); 
-            ++i; 
-        }
+    if (getcwd(cwd, sizeof(cwd))) {
+        return string(cwd) + "> ";
+    } else {
+        return "miniShell> ";
     }
 }
 
-// Function to execute the command
-void execute_command(vector<string>& args, const string& in_file, const string& out_file, bool append) {
-    pid_t pid = fork();
-    if (pid == 0) {  // Child process
-        signal(SIGINT, SIG_DFL);  // Reset signal handler to default
+void execute_pipeline(vector<Command>& commands, bool background) {
+    if (commands.empty()) return;
 
-        // If input redirection is required
-        if (!in_file.empty()) {
-            int fd = open(in_file.c_str(), O_RDONLY);
-            if (fd < 0) { perror("open input"); _exit(127); }
-            dup2(fd, 0); close(fd);  // Redirect stdin
+    int n = commands.size();
+    vector<int> pipefds(2 * max(0, n - 1));
+
+    for (int i = 0; i < n - 1; i++) {
+        if (pipe(&pipefds[i * 2]) < 0) {
+            perror("pipe");
+            for (int j = 0; j < i * 2; j++) close(pipefds[j]);
+            return;
+        }
+    }
+
+    vector<pid_t> pids;
+    pid_t pgid = 0;
+
+    for (int i = 0; i < n; i++) {
+        pid_t pid = fork();
+
+        if (pid < 0) {
+            perror("fork");
+            for (int fd : pipefds) close(fd);
+            for (pid_t p : pids) waitpid(p, nullptr, 0);
+            return;
         }
 
-        // If output redirection is required
-        if (!out_file.empty()) {
-            int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
-            int fd = open(out_file.c_str(), flags, 0644);
-            if (fd < 0) { perror("open output"); _exit(127); }
-            dup2(fd, 1); close(fd);  // Redirect stdout
+        if (pid == 0) {
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTSTP, SIG_DFL);
+
+            setpgid(0, 0);
+
+            if (i > 0) {
+                int in_fd = pipefds[(i - 1) * 2];
+                if (dup2(in_fd, STDIN_FILENO) < 0) _exit(1);
+            }
+
+            if (i < n - 1) {
+                int out_fd = pipefds[i * 2 + 1];
+                if (dup2(out_fd, STDOUT_FILENO) < 0) _exit(1);
+            }
+
+            for (int fd : pipefds) close(fd);
+
+            if (!commands[i].in_file.empty()) {
+                int fd = open(commands[i].in_file.c_str(), O_RDONLY);
+                if (fd < 0) _exit(1);
+                dup2(fd, STDIN_FILENO);
+                close(fd);
+            }
+
+            if (!commands[i].out_file.empty()) {
+                int flags = O_WRONLY | O_CREAT | (commands[i].append ? O_APPEND : O_TRUNC);
+                int fd = open(commands[i].out_file.c_str(), flags, 0644);
+                if (fd < 0) _exit(1);
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+
+            vector<char*> argv;
+            for (auto& s : commands[i].args) argv.push_back((char*)s.c_str());
+            argv.push_back(nullptr);
+
+            execvp(argv[0], argv.data());
+            _exit(127);
         }
 
-        // Convert arguments to char* array and execute the command
-        vector<char*> argv;
-        for (const auto& s : args) argv.push_back(const_cast<char*>(s.c_str()));
-        argv.push_back(nullptr);  // Null-terminate the argument list
+        else {
+            if (pgid == 0) pgid = pid;
+            setpgid(pid, pgid);
+            pids.push_back(pid);
+        }
+    }
 
-        execvp(argv[0], argv.data());
-        perror("execvp");
-        _exit(127);
+    for (int fd : pipefds) close(fd);
+
+    if (background) {
+        cout << "[" << pgid << "]\n";
+        return;
     }
-    else if (pid > 0) {  // Parent process
-        waitpid(pid, nullptr, 0);
+
+    for (pid_t p : pids) {
+        int status;
+        while (waitpid(p, &status, 0) < 0 && errno == EINTR);
     }
-    else {  // Fork failed
-        perror("fork");
+}
+
+bool build_pipeline(const vector<string>& tokens, vector<Command>& pipeline, bool& bg) {
+    Command cur;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const string& t = tokens[i];
+
+        if (t == "|") {
+            if (cur.args.empty()) return false;
+            pipeline.push_back(cur);
+            cur = Command();
+        }
+        else if (t == "&") {
+            if (i != tokens.size() - 1) return false;
+            bg = true;
+        }
+        else if (t == "<") {
+            if (i + 1 >= tokens.size()) return false;
+            cur.in_file = tokens[++i];
+        }
+        else if (t == ">" || t == ">>") {
+            if (i + 1 >= tokens.size()) return false;
+            cur.out_file = tokens[++i];
+            cur.append = (t == ">>");
+        }
+        else {
+            cur.args.push_back(t);
+        }
     }
+
+    if (!cur.args.empty() || !cur.in_file.empty() || !cur.out_file.empty())
+        pipeline.push_back(cur);
+
+    return !pipeline.empty();
+}
+
+string trim(const string& s) {
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
 }
 
 int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+
     setup_signals();
 
     string line;
-    while (true) {
+    while (true) 
+    {
         cout << get_prompt() << flush;
-        if (!getline(cin, line)) { cout << "\n"; break; }
 
-        size_t l = line.find_first_not_of(" \t\r\n");
-        if (l == string::npos) continue;
-        size_t r = line.find_last_not_of(" \t\r\n");
-        string trimmed = line.substr(l, r - l + 1);
+        if (!getline(cin, line)) {
+            cout << "\n";
+            break;
+        }
+
+        string trimmed = trim(line);
+        if (trimmed.empty()) continue;
 
         vector<string> tokens = tokenize(trimmed);
         if (tokens.empty()) continue;
 
-        // === COMMAND SUBSTITUTION $(...) ===
-        for (auto& tok : tokens) {
-            tok = expand_command_subst(tok);
+        for (auto& t : tokens)
+            if (t.find("$(") != string::npos)
+                t = expand_command_subst(t);
+
+        vector<Command> pipeline;
+        bool bg = false;
+
+        if (!build_pipeline(tokens, pipeline, bg))
+            continue;
+
+        if (pipeline.size() == 1) {
+            const auto& args = pipeline[0].args;
+            if (!args.empty()) {
+                if (args[0] == "exit") return 0;
+
+                if (args[0] == "cd") {
+                    const char* path = (args.size() > 1) ? args[1].c_str() : getenv("HOME");
+                    if (!path) path = "/";
+                    if (chdir(path) < 0) perror("cd");
+                    continue;
+                }
+            }
         }
 
-        string in_file, out_file;
-        vector<string> args;
-        bool append = false;
-
-        // Handle input/output redirection
-        handle_redirection(tokens, in_file, out_file, append, args);
-        
-        if (args.empty()) continue;
-
-        // === Execute Command ===
-        execute_command(args, in_file, out_file, append);
+        execute_pipeline(pipeline, bg);
     }
+
     return 0;
 }
-
