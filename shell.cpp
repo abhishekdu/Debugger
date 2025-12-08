@@ -248,7 +248,8 @@ void execute_pipeline(vector<Command>& commands, bool background) {
 
 bool build_pipeline(const vector<string>& tokens, vector<Command>& pipeline, bool& bg) {
     Command cur;
-    for (size_t i = 0; i < tokens.size(); ++i) {
+
+    for (size_t i = 0; i < tokens.size(); i++) {
         const string& t = tokens[i];
 
         if (t == "|") {
@@ -292,6 +293,9 @@ int main() {
     setup_signals();
 
     string line;
+    vector<Command> pipeline;
+    bool bg = false;
+
     while (true) 
     {
         cout << get_prompt() << flush;
@@ -311,8 +315,6 @@ int main() {
             if (t.find("$(") != string::npos)
                 t = expand_command_subst(t);
 
-        vector<Command> pipeline;
-        bool bg = false;
 
         if (!build_pipeline(tokens, pipeline, bg))
             continue;
@@ -328,6 +330,24 @@ int main() {
                     if (chdir(path) < 0) perror("cd");
                     continue;
                 }
+
+            if (args[0] == "pwd") {
+                char buf[4096];
+                if (getcwd(buf, sizeof(buf)))
+                    cout << buf << "\n";
+                else
+                    perror("pwd");
+                continue;
+            }
+
+            if (args[0] == "echo") {
+                for (size_t i = 1; i < args.size(); i++) {
+                    cout << args[i];
+                    if (i + 1 < args.size()) cout << " ";
+                }
+                cout << "\n";
+                continue;
+            }
             }
         }
 
